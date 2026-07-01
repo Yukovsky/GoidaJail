@@ -1,0 +1,61 @@
+modLoader = "javafml"
+loaderVersion = "${loader_version_range}"
+license = "${mod_license}"
+issueTrackerURL = "https://github.com/Yukovsky/GoidaJail/issues"
+
+[[mods]]
+modId = "${mod_id}"
+version = "${mod_version}"
+displayName = "${mod_name}"
+authors = "${mod_authors}"
+description = '''${mod_description}'''
+
+# This mod runs entirely on the server and does NOT need to be installed on clients.
+# The jail "baton" item is registered by KubeJS (which is on both sides) and merely looked up
+# by id here; the jail dimension is data-driven, so vanilla/modless-of-this clients still work.
+[[mods.dependencies."${mod_id}"]]
+modId = "neoforge"
+type = "required"
+versionRange = "${neo_version_range}"
+ordering = "NONE"
+side = "SERVER"
+
+[[mods.dependencies."${mod_id}"]]
+modId = "minecraft"
+type = "required"
+versionRange = "${minecraft_version_range}"
+ordering = "NONE"
+side = "SERVER"
+
+# KubeJS registers the baton item. Optional (the mod still loads without it — /goidajail baton
+# will report the item missing), but load AFTER it so the item exists when we look it up.
+[[mods.dependencies."${mod_id}"]]
+modId = "kubejs"
+type = "optional"
+versionRange = "*"
+ordering = "AFTER"
+side = "SERVER"
+
+# Optional integrations — saved/restored if present, ignored otherwise.
+[[mods.dependencies."${mod_id}"]]
+modId = "curios"
+type = "optional"
+versionRange = "[9.0,)"
+ordering = "AFTER"
+side = "SERVER"
+
+[[mods.dependencies."${mod_id}"]]
+modId = "cosmeticarmorreworked"
+type = "optional"
+versionRange = "*"
+ordering = "AFTER"
+side = "SERVER"
+
+# GoidaChat — optional. When present, a jailed player is fully muted (chat + voice) for the
+# duration of their sentence. GoidaJail works without it (no muting), so this stays optional.
+[[mods.dependencies."${mod_id}"]]
+modId = "goidachat"
+type = "optional"
+versionRange = "*"
+ordering = "AFTER"
+side = "SERVER"
