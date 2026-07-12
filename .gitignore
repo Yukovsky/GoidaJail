@@ -21,8 +21,6 @@ message*.txt
 # Temp
 tmp/
 
-# AI / Claude Code — not published
-.claude/
 memory/
 
 # Windows reserved device names (git occasionally sees this as untracked)
