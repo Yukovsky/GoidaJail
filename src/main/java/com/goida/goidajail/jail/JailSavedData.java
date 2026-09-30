@@ -46,6 +46,21 @@ public final class JailSavedData extends SavedData {
         }
     }
 
+    /** Record for an offline player queued to be jailed on their next login. */
+    public static final class PendingArrest {
+        public final String name;
+        @Nullable public final Integer overrideMinutes;
+        public final boolean countOffense;
+        public final long timestamp;
+
+        public PendingArrest(String name, @Nullable Integer overrideMinutes, boolean countOffense, long timestamp) {
+            this.name = name;
+            this.overrideMinutes = overrideMinutes;
+            this.countOffense = countOffense;
+            this.timestamp = timestamp;
+        }
+    }
+
     /** One audit-log row: who confiscated what from whom, and when. */
     public static final class LogEntry {
         public long time;
@@ -64,6 +79,7 @@ public final class JailSavedData extends SavedData {
     private final Map<UUID, Offense> offenses = new HashMap<>();
     private final Map<UUID, PrisonerSummary> prisoners = new HashMap<>();
     private final Set<UUID> pendingRelease = new HashSet<>();
+    private final Map<UUID, PendingArrest> pendingArrests = new HashMap<>();
 
     // Confiscation feature.
     private final Map<UUID, ConfiscatedInventory> confiscated = new HashMap<>();
@@ -165,12 +181,30 @@ public final class JailSavedData extends SavedData {
         return prisoners;
     }
 
+    public void updatePrisonerTime(UUID id, long remainingMillis, long totalMillis) {
+        PrisonerSummary s = prisoners.get(id);
+        if (s != null) {
+            s.remainingMillis = remainingMillis;
+            s.totalMillis = totalMillis;
+            setDirty();
+        }
+    }
+
     // ---- Pending offline release ----------------------------------------------------------
 
     public void addPendingRelease(UUID id) { pendingRelease.add(id); setDirty(); }
     public boolean isPendingRelease(UUID id) { return pendingRelease.contains(id); }
     public void clearPendingRelease(UUID id) { if (pendingRelease.remove(id)) setDirty(); }
     public Collection<UUID> pendingReleases() { return pendingRelease; }
+
+    // ---- Pending offline arrest -----------------------------------------------------------
+
+    public void addPendingArrest(UUID id, PendingArrest pa) { pendingArrests.put(id, pa); setDirty(); }
+    public boolean isPendingArrest(UUID id) { return pendingArrests.containsKey(id); }
+    @Nullable
+    public PendingArrest getPendingArrest(UUID id) { return pendingArrests.get(id); }
+    public void clearPendingArrest(UUID id) { if (pendingArrests.remove(id) != null) setDirty(); }
+    public Map<UUID, PendingArrest> pendingArrests() { return pendingArrests; }
 
     // ---- Confiscated inventory ------------------------------------------------------------
 
@@ -248,6 +282,17 @@ public final class JailSavedData extends SavedData {
                 data.pendingRelease.add(UUID.fromString(pending.getString(i)));
             }
 
+            ListTag paList = tag.getList("pendingArrests", Tag.TAG_COMPOUND);
+            for (int i = 0; i < paList.size(); i++) {
+                CompoundTag e = paList.getCompound(i);
+                UUID pid = UUID.fromString(e.getString("id"));
+                String pname = e.getString("name");
+                Integer pmin = e.contains("minutes") ? e.getInt("minutes") : null;
+                boolean pcount = !e.contains("countOffense") || e.getBoolean("countOffense");
+                long pts = e.getLong("timestamp");
+                data.pendingArrests.put(pid, new PendingArrest(pname, pmin, pcount, pts));
+            }
+
             ListTag confList = tag.getList("confiscated", Tag.TAG_COMPOUND);
             for (int i = 0; i < confList.size(); i++) {
                 CompoundTag e = confList.getCompound(i);
@@ -317,6 +362,20 @@ public final class JailSavedData extends SavedData {
         ListTag pending = new ListTag();
         pendingRelease.forEach(id -> pending.add(net.minecraft.nbt.StringTag.valueOf(id.toString())));
         tag.put("pendingRelease", pending);
+
+        ListTag pendingArrestList = new ListTag();
+        pendingArrests.forEach((id, pa) -> {
+            CompoundTag e = new CompoundTag();
+            e.putString("id", id.toString());
+            e.putString("name", pa.name);
+            if (pa.overrideMinutes != null) {
+                e.putInt("minutes", pa.overrideMinutes);
+            }
+            e.putBoolean("countOffense", pa.countOffense);
+            e.putLong("timestamp", pa.timestamp);
+            pendingArrestList.add(e);
+        });
+        tag.put("pendingArrests", pendingArrestList);
 
         ListTag confList = new ListTag();
         confiscated.forEach((id, inv) -> {

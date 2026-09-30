@@ -168,6 +168,13 @@ public final class JailManager {
         JailChatMute.lift(id);
     }
 
+    /** Queue an offline player for arrest on their next login. */
+    public static void requestOfflineArrest(MinecraftServer server, UUID id, String name,
+                                           @Nullable Integer minutes, boolean countOffense) {
+        JailSavedData.get(server).addPendingArrest(id,
+                new JailSavedData.PendingArrest(name, minutes, countOffense, System.currentTimeMillis()));
+    }
+
     // ---- Per-tick sentence accounting -----------------------------------------------------
 
     public static void tickPrisoner(ServerPlayer p) {
@@ -218,9 +225,29 @@ public final class JailManager {
 
         if (saved.isPendingRelease(id)) {
             saved.clearPendingRelease(id);
+            saved.clearPendingArrest(id);
             if (data.isJailed()) {
                 release(p, true, false, Component.literal("§aВы были освобождены администратором."));
                 return;
+            }
+        }
+
+        if (saved.isPendingArrest(id)) {
+            JailSavedData.PendingArrest pending = saved.getPendingArrest(id);
+            saved.clearPendingArrest(id);
+            if (pending != null) {
+                if (!data.isJailed()) {
+                    arrest(p, pending.overrideMinutes, pending.countOffense);
+                    return;
+                } else if (pending.overrideMinutes != null) {
+                    long newMillis = Math.max(1, pending.overrideMinutes) * 60_000L;
+                    data.setRemainingMillis(newMillis);
+                    data.setTotalMillis(Math.max(data.getTotalMillis(), newMillis));
+                    p.setData(ModAttachments.PRISONER.get(), data);
+                    saved.updatePrisoner(id, p.getGameProfile().getName(), newMillis, data.getTotalMillis());
+                    p.sendSystemMessage(Component.literal("§eВаш тюремный срок был изменён администратором на "
+                            + formatDuration(newMillis) + "."));
+                }
             }
         }
 
@@ -236,6 +263,14 @@ public final class JailManager {
         if (!data.isJailed()) {
             return;
         }
+
+        // Synchronize sentence with JailSavedData in case an admin altered time while offline
+        JailSavedData.PrisonerSummary summary = saved.prisoners().get(id);
+        if (summary != null) {
+            data.setRemainingMillis(summary.remainingMillis);
+            data.setTotalMillis(summary.totalMillis);
+        }
+
         // Resume the sentence: reset the tick clock so the offline period does not count.
         data.setLastTickEpoch(System.currentTimeMillis());
         data.setLastRadioEpoch(0L);

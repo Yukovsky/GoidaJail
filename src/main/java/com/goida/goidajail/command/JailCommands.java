@@ -22,6 +22,7 @@ import com.mojang.brigadier.tree.LiteralCommandNode;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
+import net.minecraft.commands.arguments.GameProfileArgument;
 import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -76,43 +77,50 @@ public final class JailCommands {
 
                 .then(Commands.literal("jail")
                         .requires(JailPermissions::canUse)
-                        .then(Commands.argument("targets", EntityArgument.players())
+                        .then(Commands.argument("targets", GameProfileArgument.gameProfile())
                                 .executes(ctx -> jail(ctx, null))
                                 .then(Commands.argument("minutes", IntegerArgumentType.integer(1))
                                         .executes(ctx -> jail(ctx, IntegerArgumentType.getInteger(ctx, "minutes"))))))
 
                 // Прямой аргумент: /goidajail <игрок> [минуты] (удобный шорткат для /goidajail jail ...)
-                .then(Commands.argument("targets", EntityArgument.players())
+                .then(Commands.argument("targets", GameProfileArgument.gameProfile())
                         .requires(JailPermissions::canUse)
                         .executes(ctx -> jail(ctx, null))
                         .then(Commands.argument("minutes", IntegerArgumentType.integer(1))
                                 .executes(ctx -> jail(ctx, IntegerArgumentType.getInteger(ctx, "minutes")))))
 
+                .then(Commands.literal("jailoffline")
+                        .requires(JailPermissions::canUse)
+                        .then(Commands.argument("name", StringArgumentType.word())
+                                .executes(ctx -> jailOffline(ctx, null))
+                                .then(Commands.argument("minutes", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> jailOffline(ctx, IntegerArgumentType.getInteger(ctx, "minutes"))))))
+
                 .then(Commands.literal("release")
                         .requires(JailPermissions::canUse)
-                        .then(Commands.argument("targets", EntityArgument.players())
+                        .then(Commands.argument("targets", GameProfileArgument.gameProfile())
                                 .executes(ctx -> releaseCmd(ctx, false))))
 
                 .then(Commands.literal("pardon")
                         .requires(JailPermissions::canUse)
-                        .then(Commands.argument("targets", EntityArgument.players())
+                        .then(Commands.argument("targets", GameProfileArgument.gameProfile())
                                 .executes(ctx -> releaseCmd(ctx, true))))
 
                 .then(Commands.literal("time")
                         .requires(JailPermissions::canUse)
-                        .then(Commands.argument("targets", EntityArgument.players())
+                        .then(Commands.argument("targets", GameProfileArgument.gameProfile())
                                 .then(Commands.argument("minutes", IntegerArgumentType.integer(0))
                                         .executes(ctx -> changeTime(ctx, false)))))
 
                 .then(Commands.literal("addtime")
                         .requires(JailPermissions::canUse)
-                        .then(Commands.argument("targets", EntityArgument.players())
+                        .then(Commands.argument("targets", GameProfileArgument.gameProfile())
                                 .then(Commands.argument("minutes", IntegerArgumentType.integer(0))
                                         .executes(ctx -> changeTime(ctx, true)))))
 
                 .then(Commands.literal("info")
                         .requires(JailPermissions::canUse)
-                        .then(Commands.argument("targets", EntityArgument.players())
+                        .then(Commands.argument("targets", GameProfileArgument.gameProfile())
                                 .executes(JailCommands::info)))
 
                 .then(Commands.literal("list")
@@ -131,7 +139,7 @@ public final class JailCommands {
 
                 .then(Commands.literal("clearoffenses")
                         .requires(JailPermissions::canUse)
-                        .then(Commands.argument("targets", EntityArgument.players())
+                        .then(Commands.argument("targets", GameProfileArgument.gameProfile())
                                 .executes(JailCommands::clearOffenses)))
 
                 .then(Commands.literal("releaseoffline")
@@ -200,6 +208,14 @@ public final class JailCommands {
                 .requires(src -> !isSourceJailed(src) && JailPermissions.canUse(src))
                 .redirect(root));
 
+        // Алиас /jailoffline <игрок> [минуты] -> запланировать арест оффлайн-игрока
+        d.register(Commands.literal("jailoffline")
+                .requires(src -> !isSourceJailed(src) && JailPermissions.canUse(src))
+                .then(Commands.argument("name", StringArgumentType.word())
+                        .executes(ctx -> jailOffline(ctx, null))
+                        .then(Commands.argument("minutes", IntegerArgumentType.integer(1))
+                                .executes(ctx -> jailOffline(ctx, IntegerArgumentType.getInteger(ctx, "minutes"))))));
+
         // Алиас /unjail <игрок> -> освободить заключённого (/goidajail release)
         d.register(Commands.literal("unjail")
                 .requires(src -> !isSourceJailed(src) && JailPermissions.canUse(src))
@@ -207,8 +223,14 @@ public final class JailCommands {
                     ctx.getSource().sendFailure(Component.literal("§cИспользование: /unjail <игрок>"));
                     return 0;
                 })
-                .then(Commands.argument("targets", EntityArgument.players())
+                .then(Commands.argument("targets", GameProfileArgument.gameProfile())
                         .executes(ctx -> releaseCmd(ctx, false))));
+
+        // Алиас /unjailoffline <игрок> -> освободить оффлайн-игрока (/goidajail releaseoffline)
+        d.register(Commands.literal("unjailoffline")
+                .requires(src -> !isSourceJailed(src) && JailPermissions.canUse(src))
+                .then(Commands.argument("name", StringArgumentType.word())
+                        .executes(JailCommands::releaseOffline)));
     }
 
     // ---- Executors ------------------------------------------------------------------------
@@ -247,94 +269,254 @@ public final class JailCommands {
     }
 
     private static int jail(CommandContext<CommandSourceStack> ctx, Integer minutes) throws CommandSyntaxException {
-        Collection<ServerPlayer> targets = EntityArgument.getPlayers(ctx, "targets");
+        Collection<GameProfile> targets = GameProfileArgument.getGameProfiles(ctx, "targets");
+        MinecraftServer server = ctx.getSource().getServer();
+        JailSavedData saved = JailSavedData.get(server);
         int n = 0;
-        for (ServerPlayer target : targets) {
-            if (blockSelf(ctx.getSource(), target, "посадить")) {
+        for (GameProfile profile : targets) {
+            UUID id = profile.getId();
+            String pname = profile.getName();
+            if (blockSelf(ctx.getSource(), id, "посадить")) {
                 continue;
             }
-            if (JailManager.isJailed(target)) {
-                ctx.getSource().sendFailure(Component.literal("§e" + name(target) + " уже в тюрьме."));
-                continue;
-            }
-            if (JailManager.arrest(target, minutes, true)) {
-                n++;
-                ctx.getSource().sendSuccess(() -> Component.literal("§a" + name(target) + " отправлен в тюрьму."), true);
+            ServerPlayer online = server.getPlayerList().getPlayer(id);
+            if (online != null) {
+                if (JailManager.isJailed(online)) {
+                    ctx.getSource().sendFailure(Component.literal("§e" + pname + " уже в тюрьме."));
+                    continue;
+                }
+                if (JailManager.arrest(online, minutes, true)) {
+                    n++;
+                    ctx.getSource().sendSuccess(() -> Component.literal("§a" + pname + " отправлен в тюрьму."), true);
+                } else {
+                    ctx.getSource().sendFailure(Component.literal("§cНе удалось посадить " + pname + "."));
+                }
             } else {
-                ctx.getSource().sendFailure(Component.literal("§cНе удалось посадить " + name(target) + "."));
+                // Offline player
+                if (saved.prisoners().containsKey(id)) {
+                    ctx.getSource().sendFailure(Component.literal("§e" + pname + " (оффлайн) уже в тюрьме."));
+                    continue;
+                }
+                boolean updated = saved.isPendingArrest(id);
+                JailManager.requestOfflineArrest(server, id, pname, minutes, true);
+                n++;
+                final String timeMsg = (minutes != null) ? " (" + minutes + " мин)" : "";
+                if (updated) {
+                    ctx.getSource().sendSuccess(() -> Component.literal(
+                            "§aАрест для " + pname + " обновлён. Он будет помещён в тюрьму при следующем входе" + timeMsg + "."), true);
+                } else {
+                    ctx.getSource().sendSuccess(() -> Component.literal(
+                            "§a" + pname + " сейчас оффлайн. Он будет помещён в тюрьму при следующем входе" + timeMsg + "."), true);
+                }
             }
         }
         return n;
     }
 
+    private static int jailOffline(CommandContext<CommandSourceStack> ctx, Integer minutes) {
+        String pname = StringArgumentType.getString(ctx, "name");
+        MinecraftServer server = ctx.getSource().getServer();
+        JailSavedData saved = JailSavedData.get(server);
+
+        ServerPlayer online = server.getPlayerList().getPlayerByName(pname);
+        if (online != null) {
+            if (blockSelf(ctx.getSource(), online.getUUID(), "посадить")) {
+                return 0;
+            }
+            if (JailManager.isJailed(online)) {
+                ctx.getSource().sendFailure(Component.literal("§e" + online.getGameProfile().getName() + " уже в тюрьме."));
+                return 0;
+            }
+            if (JailManager.arrest(online, minutes, true)) {
+                ctx.getSource().sendSuccess(() -> Component.literal("§a" + online.getGameProfile().getName() + " отправлен в тюрьму."), true);
+                return 1;
+            } else {
+                ctx.getSource().sendFailure(Component.literal("§cНе удалось посадить " + online.getGameProfile().getName() + "."));
+                return 0;
+            }
+        }
+
+        UUID id;
+        String resolvedName = pname;
+        Optional<GameProfile> profile = server.getProfileCache() == null
+                ? Optional.empty() : server.getProfileCache().get(pname);
+        if (profile.isPresent()) {
+            id = profile.get().getId();
+            resolvedName = profile.get().getName();
+        } else if (!server.usesAuthentication()) {
+            id = UUID.nameUUIDFromBytes(("OfflinePlayer:" + pname).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } else {
+            ctx.getSource().sendFailure(Component.literal("§cИгрок '" + pname + "' не найден в кэше профилей."));
+            return 0;
+        }
+
+        if (blockSelf(ctx.getSource(), id, "посадить")) {
+            return 0;
+        }
+        if (saved.prisoners().containsKey(id)) {
+            ctx.getSource().sendFailure(Component.literal("§e" + resolvedName + " (оффлайн) уже в тюрьме."));
+            return 0;
+        }
+
+        boolean updated = saved.isPendingArrest(id);
+        JailManager.requestOfflineArrest(server, id, resolvedName, minutes, true);
+        final String finalName = resolvedName;
+        final String timeMsg = (minutes != null) ? " (" + minutes + " мин)" : "";
+        if (updated) {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "§aАрест для " + finalName + " обновлён. Он будет помещён в тюрьму при следующем входе" + timeMsg + "."), true);
+        } else {
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "§a" + finalName + " сейчас оффлайн. Он будет помещён в тюрьму при следующем входе" + timeMsg + "."), true);
+        }
+        return 1;
+    }
+
     private static int releaseCmd(CommandContext<CommandSourceStack> ctx, boolean refundOffense) throws CommandSyntaxException {
-        Collection<ServerPlayer> targets = EntityArgument.getPlayers(ctx, "targets");
+        Collection<GameProfile> targets = GameProfileArgument.getGameProfiles(ctx, "targets");
+        MinecraftServer server = ctx.getSource().getServer();
+        JailSavedData saved = JailSavedData.get(server);
         int n = 0;
-        for (ServerPlayer target : targets) {
-            if (blockSelf(ctx.getSource(), target, "освободить")) {
+        for (GameProfile profile : targets) {
+            UUID id = profile.getId();
+            String pname = profile.getName();
+            if (blockSelf(ctx.getSource(), id, "освободить")) {
                 continue;
             }
-            if (!JailManager.isJailed(target)) {
-                ctx.getSource().sendFailure(Component.literal("§e" + name(target) + " не в тюрьме."));
-                continue;
+            ServerPlayer online = server.getPlayerList().getPlayer(id);
+            if (online != null) {
+                if (!JailManager.isJailed(online)) {
+                    ctx.getSource().sendFailure(Component.literal("§e" + pname + " не в тюрьме."));
+                    continue;
+                }
+                JailManager.release(online, true, refundOffense,
+                        Component.literal(refundOffense ? "§aВы были помилованы администратором."
+                                                        : "§aВы были освобождены администратором."));
+                n++;
+                String verb = refundOffense ? "помилован (нарушение снято)" : "освобождён";
+                ctx.getSource().sendSuccess(() -> Component.literal("§a" + pname + " " + verb + "."), true);
+            } else {
+                // Offline player
+                boolean handled = false;
+                if (saved.isPendingArrest(id)) {
+                    saved.clearPendingArrest(id);
+                    ctx.getSource().sendSuccess(() -> Component.literal("§aЗапланированный арест для " + pname + " отменён."), true);
+                    handled = true;
+                    n++;
+                }
+                if (saved.prisoners().containsKey(id)) {
+                    JailManager.requestOfflineRelease(server, id);
+                    if (refundOffense) saved.refundOffense(id);
+                    ctx.getSource().sendSuccess(() -> Component.literal(
+                            "§a" + pname + " (оффлайн) будет освобождён и получит вещи при следующем входе."), true);
+                    handled = true;
+                    n++;
+                }
+                if (!handled) {
+                    ctx.getSource().sendFailure(Component.literal("§e" + pname + " не в тюрьме."));
+                }
             }
-            JailManager.release(target, true, refundOffense,
-                    Component.literal("§aВы были освобождены администратором."));
-            n++;
-            String verb = refundOffense ? "помилован (нарушение снято)" : "освобождён";
-            ctx.getSource().sendSuccess(() -> Component.literal("§a" + name(target) + " " + verb + "."), true);
         }
         return n;
     }
 
     private static int changeTime(CommandContext<CommandSourceStack> ctx, boolean add) throws CommandSyntaxException {
-        Collection<ServerPlayer> targets = EntityArgument.getPlayers(ctx, "targets");
+        Collection<GameProfile> targets = GameProfileArgument.getGameProfiles(ctx, "targets");
         int minutes = IntegerArgumentType.getInteger(ctx, "minutes");
         long deltaMillis = minutes * 60_000L;
         MinecraftServer server = ctx.getSource().getServer();
         JailSavedData saved = JailSavedData.get(server);
         int n = 0;
-        for (ServerPlayer target : targets) {
-            if (blockSelf(ctx.getSource(), target, "менять срок")) {
+        for (GameProfile profile : targets) {
+            UUID id = profile.getId();
+            String pname = profile.getName();
+            if (blockSelf(ctx.getSource(), id, "менять срок")) {
                 continue;
             }
-            PrisonerData data = target.getData(ModAttachments.PRISONER.get());
-            if (!data.isJailed()) {
-                ctx.getSource().sendFailure(Component.literal("§e" + name(target) + " не в тюрьме."));
-                continue;
-            }
-            if (add) {
-                data.addRemainingMillis(deltaMillis);
-                data.setTotalMillis(data.getTotalMillis() + Math.max(0, deltaMillis));
+            ServerPlayer online = server.getPlayerList().getPlayer(id);
+            if (online != null) {
+                PrisonerData data = online.getData(ModAttachments.PRISONER.get());
+                if (!data.isJailed()) {
+                    ctx.getSource().sendFailure(Component.literal("§e" + pname + " не в тюрьме."));
+                    continue;
+                }
+                if (add) {
+                    data.addRemainingMillis(deltaMillis);
+                    data.setTotalMillis(data.getTotalMillis() + Math.max(0, deltaMillis));
+                } else {
+                    data.setRemainingMillis(deltaMillis);
+                    data.setTotalMillis(Math.max(data.getTotalMillis(), deltaMillis));
+                }
+                online.setData(ModAttachments.PRISONER.get(), data);
+                saved.updatePrisoner(id, pname, data.getRemainingMillis(), data.getTotalMillis());
+                n++;
+                ctx.getSource().sendSuccess(() -> Component.literal(
+                        "§aСрок для " + pname + ": §e" + JailManager.formatDuration(data.getRemainingMillis())), true);
+            } else if (saved.prisoners().containsKey(id)) {
+                // Offline prisoner
+                JailSavedData.PrisonerSummary s = saved.prisoners().get(id);
+                long newRemaining = add ? Math.max(0L, s.remainingMillis + deltaMillis) : deltaMillis;
+                long newTotal = add ? s.totalMillis + Math.max(0, deltaMillis) : Math.max(s.totalMillis, deltaMillis);
+                saved.updatePrisonerTime(id, newRemaining, newTotal);
+                n++;
+                ctx.getSource().sendSuccess(() -> Component.literal(
+                        "§aСрок для " + pname + " (оффлайн): §e" + JailManager.formatDuration(newRemaining)), true);
+            } else if (saved.isPendingArrest(id)) {
+                // Pending arrest
+                JailSavedData.PendingArrest pa = saved.getPendingArrest(id);
+                int baseMin = pa.overrideMinutes != null ? pa.overrideMinutes : 0;
+                int newMin = add ? Math.max(1, baseMin + minutes) : minutes;
+                saved.addPendingArrest(id, new JailSavedData.PendingArrest(pname, newMin, pa.countOffense, pa.timestamp));
+                n++;
+                ctx.getSource().sendSuccess(() -> Component.literal(
+                        "§aЗапланированный срок для " + pname + " (ожидает входа): §e" + newMin + " мин."), true);
             } else {
-                data.setRemainingMillis(deltaMillis);
-                data.setTotalMillis(Math.max(data.getTotalMillis(), deltaMillis));
+                ctx.getSource().sendFailure(Component.literal("§e" + pname + " не в тюрьме."));
             }
-            target.setData(ModAttachments.PRISONER.get(), data);
-            saved.updatePrisoner(target.getUUID(), name(target), data.getRemainingMillis(), data.getTotalMillis());
-            n++;
-            ctx.getSource().sendSuccess(() -> Component.literal(
-                    "§aСрок для " + name(target) + ": §e" + JailManager.formatDuration(data.getRemainingMillis())), true);
         }
         return n;
     }
 
     private static int info(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
-        Collection<ServerPlayer> targets = EntityArgument.getPlayers(ctx, "targets");
+        Collection<GameProfile> targets = GameProfileArgument.getGameProfiles(ctx, "targets");
         MinecraftServer server = ctx.getSource().getServer();
         JailSavedData saved = JailSavedData.get(server);
         long now = System.currentTimeMillis();
-        for (ServerPlayer target : targets) {
-            PrisonerData data = target.getData(ModAttachments.PRISONER.get());
-            int offenses = saved.currentOffenseCount(target.getUUID(), now);
-            boolean backup = saved.hasConfiscated(target.getUUID());
-            ctx.getSource().sendSuccess(() -> Component.literal(
-                    "§6" + name(target) + "§f: " + (data.isJailed()
-                            ? "§cв тюрьме, осталось §e" + JailManager.formatDuration(data.getRemainingMillis())
-                            + "§f из §e" + JailManager.formatDuration(data.getTotalMillis())
-                            : "§aна свободе")
-                    + " §7| нарушений: §f" + offenses
-                    + " §7| изъятый инвентарь: " + (backup ? "§aесть" : "§7нет")), false);
+        for (GameProfile profile : targets) {
+            UUID id = profile.getId();
+            String pname = profile.getName();
+            int offenses = saved.currentOffenseCount(id, now);
+            boolean backup = saved.hasConfiscated(id);
+            ServerPlayer online = server.getPlayerList().getPlayer(id);
+            if (online != null) {
+                PrisonerData data = online.getData(ModAttachments.PRISONER.get());
+                ctx.getSource().sendSuccess(() -> Component.literal(
+                        "§6" + pname + "§f: " + (data.isJailed()
+                                ? "§cв тюрьме (онлайн), осталось §e" + JailManager.formatDuration(data.getRemainingMillis())
+                                + "§f из §e" + JailManager.formatDuration(data.getTotalMillis())
+                                : "§aна свободе")
+                        + " §7| нарушений: §f" + offenses
+                        + " §7| изъятый инвентарь: " + (backup ? "§aесть" : "§7нет")), false);
+            } else if (saved.isPendingArrest(id)) {
+                JailSavedData.PendingArrest pa = saved.getPendingArrest(id);
+                String dur = pa.overrideMinutes != null ? (pa.overrideMinutes + " мин") : "по истории нарушений";
+                ctx.getSource().sendSuccess(() -> Component.literal(
+                        "§6" + pname + "§f: §eожидает ареста при следующем входе (" + dur + ")"
+                        + " §7| нарушений: §f" + offenses
+                        + " §7| изъятый инвентарь: " + (backup ? "§aесть" : "§7нет (будет изъят при входе)")), false);
+            } else if (saved.prisoners().containsKey(id)) {
+                JailSavedData.PrisonerSummary s = saved.prisoners().get(id);
+                ctx.getSource().sendSuccess(() -> Component.literal(
+                        "§6" + pname + "§f: §cв тюрьме (оффлайн), осталось §e" + JailManager.formatDuration(s.remainingMillis)
+                        + "§f из §e" + JailManager.formatDuration(s.totalMillis)
+                        + " §7| нарушений: §f" + offenses
+                        + " §7| изъятый инвентарь: " + (backup ? "§aесть" : "§7нет")), false);
+            } else {
+                ctx.getSource().sendSuccess(() -> Component.literal(
+                        "§6" + pname + "§f: §aна свободе (оффлайн)"
+                        + " §7| нарушений: §f" + offenses
+                        + " §7| изъятый инвентарь: " + (backup ? "§aесть" : "§7нет")), false);
+            }
         }
         return 1;
     }
@@ -343,21 +525,32 @@ public final class JailCommands {
         MinecraftServer server = ctx.getSource().getServer();
         JailSavedData saved = JailSavedData.get(server);
         var prisoners = saved.prisoners();
-        if (prisoners.isEmpty()) {
+        var pendingArrests = saved.pendingArrests();
+        if (prisoners.isEmpty() && pendingArrests.isEmpty()) {
             ctx.getSource().sendSuccess(() -> Component.literal("§7В тюрьме никого нет."), false);
             return 0;
         }
-        ctx.getSource().sendSuccess(() -> Component.literal("§6Заключённые (§f" + prisoners.size() + "§6):"), false);
-        prisoners.forEach((uuid, summary) -> {
-            ServerPlayer online = server.getPlayerList().getPlayer(uuid);
-            long remaining = (online != null)
-                    ? online.getData(ModAttachments.PRISONER.get()).getRemainingMillis()
-                    : summary.remainingMillis;
-            String status = online != null ? "§a●" : "§7○";
-            ctx.getSource().sendSuccess(() -> Component.literal(
-                    "  " + status + " §f" + summary.name + " §7— §e" + JailManager.formatDuration(remaining)), false);
-        });
-        return 1;
+        if (!prisoners.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal("§6Заключённые (§f" + prisoners.size() + "§6):"), false);
+            prisoners.forEach((uuid, summary) -> {
+                ServerPlayer online = server.getPlayerList().getPlayer(uuid);
+                long remaining = (online != null)
+                        ? online.getData(ModAttachments.PRISONER.get()).getRemainingMillis()
+                        : summary.remainingMillis;
+                String status = online != null ? "§a●" : "§7○";
+                ctx.getSource().sendSuccess(() -> Component.literal(
+                        "  " + status + " §f" + summary.name + " §7— §e" + JailManager.formatDuration(remaining)), false);
+            });
+        }
+        if (!pendingArrests.isEmpty()) {
+            ctx.getSource().sendSuccess(() -> Component.literal("§eОжидают ареста при входе (§f" + pendingArrests.size() + "§e):"), false);
+            pendingArrests.forEach((uuid, pa) -> {
+                String dur = pa.overrideMinutes != null ? (pa.overrideMinutes + " мин") : "по истории";
+                ctx.getSource().sendSuccess(() -> Component.literal(
+                        "  §c⏳ §f" + pa.name + " §7— §e" + dur), false);
+            });
+        }
+        return prisoners.size() + pendingArrests.size();
     }
 
     private static int restoreInv(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
@@ -406,49 +599,74 @@ public final class JailCommands {
     }
 
     private static int clearOffenses(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
-        Collection<ServerPlayer> targets = EntityArgument.getPlayers(ctx, "targets");
+        Collection<GameProfile> targets = GameProfileArgument.getGameProfiles(ctx, "targets");
         JailSavedData saved = JailSavedData.get(ctx.getSource().getServer());
-        for (ServerPlayer target : targets) {
-            if (blockSelf(ctx.getSource(), target, "очищать нарушения у")) {
+        int n = 0;
+        for (GameProfile profile : targets) {
+            if (blockSelf(ctx.getSource(), profile.getId(), "очищать нарушения у")) {
                 continue;
             }
-            saved.clearOffenses(target.getUUID());
-            ctx.getSource().sendSuccess(() -> Component.literal("§aИстория нарушений " + name(target) + " очищена."), true);
+            saved.clearOffenses(profile.getId());
+            n++;
+            ctx.getSource().sendSuccess(() -> Component.literal("§aИстория нарушений " + profile.getName() + " очищена."), true);
         }
-        return 1;
+        return n;
     }
 
     private static int releaseOffline(CommandContext<CommandSourceStack> ctx) {
         String pname = StringArgumentType.getString(ctx, "name");
         MinecraftServer server = ctx.getSource().getServer();
+        JailSavedData saved = JailSavedData.get(server);
         ServerPlayer online = server.getPlayerList().getPlayerByName(pname);
         if (online != null) {
-            if (blockSelf(ctx.getSource(), online, "освободить")) {
+            if (blockSelf(ctx.getSource(), online.getUUID(), "освободить")) {
                 return 0;
             }
             if (JailManager.isJailed(online)) {
                 JailManager.release(online, true, false,
                         Component.literal("§aВы были освобождены администратором."));
-                ctx.getSource().sendSuccess(() -> Component.literal("§a" + pname + " освобождён."), true);
+                ctx.getSource().sendSuccess(() -> Component.literal("§a" + online.getGameProfile().getName() + " освобождён."), true);
+                return 1;
             } else {
-                ctx.getSource().sendFailure(Component.literal("§e" + pname + " не в тюрьме."));
+                ctx.getSource().sendFailure(Component.literal("§e" + online.getGameProfile().getName() + " не в тюрьме."));
+                return 0;
             }
-            return 1;
         }
         Optional<GameProfile> profile = server.getProfileCache() == null
                 ? Optional.empty() : server.getProfileCache().get(pname);
-        if (profile.isEmpty()) {
+        UUID id;
+        final String finalName;
+        if (profile.isPresent()) {
+            id = profile.get().getId();
+            finalName = profile.get().getName();
+        } else if (!server.usesAuthentication()) {
+            id = UUID.nameUUIDFromBytes(("OfflinePlayer:" + pname).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            finalName = pname;
+        } else {
             ctx.getSource().sendFailure(Component.literal("§cИгрок '" + pname + "' не найден."));
             return 0;
         }
-        UUID id = profile.get().getId();
-        if (ctx.getSource().getEntity() instanceof ServerPlayer self && self.getUUID().equals(id)) {
-            ctx.getSource().sendFailure(Component.literal("§cНельзя освободить самого себя."));
+
+        if (blockSelf(ctx.getSource(), id, "освободить")) {
             return 0;
         }
-        JailManager.requestOfflineRelease(server, id);
-        ctx.getSource().sendSuccess(() -> Component.literal(
-                "§a" + pname + " будет освобождён и получит вещи при следующем входе."), true);
+
+        boolean handled = false;
+        if (saved.isPendingArrest(id)) {
+            saved.clearPendingArrest(id);
+            ctx.getSource().sendSuccess(() -> Component.literal("§aЗапланированный арест для " + finalName + " отменён."), true);
+            handled = true;
+        }
+        if (saved.prisoners().containsKey(id)) {
+            JailManager.requestOfflineRelease(server, id);
+            ctx.getSource().sendSuccess(() -> Component.literal(
+                    "§a" + finalName + " будет освобождён и получит вещи при следующем входе."), true);
+            handled = true;
+        }
+        if (!handled) {
+            ctx.getSource().sendFailure(Component.literal("§e" + finalName + " не в тюрьме и не ожидает ареста."));
+            return 0;
+        }
         return 1;
     }
 
@@ -481,6 +699,10 @@ public final class JailCommands {
             }
             targetId = profile.get().getId();
             targetName = profile.get().getName();
+            if (saved.isPendingArrest(targetId)) {
+                src.sendFailure(Component.literal("§e" + targetName + " ожидает ареста при следующем входе. Инвентарь будет изъят при подключении."));
+                return 0;
+            }
             if (!saved.prisoners().containsKey(targetId)) {
                 src.sendFailure(Component.literal("§e" + targetName + " не в тюрьме."));
                 return 0;
@@ -692,14 +914,15 @@ public final class JailCommands {
         line(s, "§7Время идёт только пока игрок онлайн. Вещи изымаются и возвращаются при выходе.");
         line(s, "");
         line(s, "§6/goidajail baton §7— получить дубинку");
-        line(s, "§6/jail <игрок> [минуты] §7или §6/goidajail jail <игрок> [минуты] §7— посадить вручную");
-        line(s, "§6/unjail <игрок> §7или §6/goidajail release <игрок> §7— освободить и вернуть вещи");
+        line(s, "§6/jail <игрок> [минуты] §7или §6/goidajail jail <игрок> [минуты] §7— посадить (онлайн или оффлайн)");
+        line(s, "§6/jailoffline <ник> [минуты] §7— запланировать арест оффлайн-игрока на след. вход");
+        line(s, "§6/unjail <игрок> §7или §6/goidajail release <игрок> §7— освободить (онлайн или оффлайн)");
+        line(s, "§6/unjailoffline <ник> §7или §6/goidajail releaseoffline <ник> §7— освободить при след. входе");
         line(s, "§6/goidajail pardon <игрок> §7— освободить + СНЯТЬ нарушение (ошибочный арест)");
-        line(s, "§6/goidajail time <игрок> <минуты> §7— задать оставшийся срок");
-        line(s, "§6/goidajail addtime <игрок> <минуты> §7— добавить/убавить срок");
+        line(s, "§6/goidajail time <игрок> <минуты> §7— задать оставшийся срок (онлайн/оффлайн)");
+        line(s, "§6/goidajail addtime <игрок> <минуты> §7— добавить/убавить срок (онлайн/оффлайн)");
         line(s, "§6/goidajail info <игрок> §7— статус, срок, число нарушений, есть ли бэкап");
-        line(s, "§6/goidajail list §7— список заключённых (●онлайн / ○офлайн)");
-        line(s, "§6/goidajail releaseoffline <ник> §7— освободить офлайн-игрока при след. входе");
+        line(s, "§6/goidajail list §7— список заключённых (●онлайн / ○офлайн / ⏳ожидают ареста)");
         line(s, "§6/goidajail restoreinv <игрок> §7— §cвосстановление§7: вернуть вещи из бэкапа");
         line(s, "§6/goidajail clearstate <игрок> §7— §cаварийно§7: снять статус тюрьмы без возврата вещей");
         line(s, "§6/goidajail clearoffenses <игрок> §7— очистить историю нарушений");
@@ -745,11 +968,15 @@ public final class JailCommands {
      * Blocks a player from targeting themselves with a state-changing command (you can neither
      * jail nor free yourself). Console and command blocks have no entity and always pass.
      */
-    private static boolean blockSelf(CommandSourceStack src, ServerPlayer target, String action) {
-        if (src.getEntity() instanceof ServerPlayer p && p.getUUID().equals(target.getUUID())) {
+    private static boolean blockSelf(CommandSourceStack src, UUID targetId, String action) {
+        if (src.getEntity() instanceof ServerPlayer p && p.getUUID().equals(targetId)) {
             src.sendFailure(Component.literal("§cНельзя " + action + " самого себя."));
             return true;
         }
         return false;
+    }
+
+    private static boolean blockSelf(CommandSourceStack src, ServerPlayer target, String action) {
+        return blockSelf(src, target.getUUID(), action);
     }
 }
