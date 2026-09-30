@@ -108,11 +108,14 @@ radioIntervalSeconds = 30   # how often the in-cell reminder message repeats
 
 ## Commands
 
-All commands live under `/goidajail` and require a permission node — see
-[Permissions](#permissions).
+All commands live under `/goidajail` (with intuitive aliases `/jail` and `/unjail`) and require a permission node — see
+[Permissions](#permissions). Typing `/goidajail` or `/jail` without subcommands displays the full help message.
 
 | Command | Description |
 |---|---|
+| `/goidajail` or `/jail` | Show interactive help |
+| `/jail <player> [minutes]` | Quick alias to jail a player |
+| `/unjail <player>` | Quick alias to release and restore items |
 | `help` | List all commands |
 | `baton` | Give yourself a baton (skipped if you already have one) |
 | `jail <player> [minutes]` | Manually jail a player |
@@ -226,6 +229,19 @@ imply silent mode or log access. Grant exactly what each role needs.
 
   ```
   /lp group moderator permission set goidajail.use true
+  ```
+
+- **With FTB Ranks:** either grant standard command permissions or the mod's permission nodes in `ranks.snbt`:
+
+  ```snbt
+  moderator: {
+      name: "Moderator"
+      power: 100
+      command.goidajail: true
+      # or explicitly:
+      goidajail.use: true
+      goidajail.confiscate: true
+  }
   ```
 
 Console and command blocks are always checked against their own permission level directly.

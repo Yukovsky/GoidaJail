@@ -18,6 +18,7 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.tree.LiteralCommandNode;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
@@ -56,13 +57,14 @@ public final class JailCommands {
     }
 
     private static void register(CommandDispatcher<CommandSourceStack> d) {
-        d.register(Commands.literal("goidajail")
+        LiteralCommandNode<CommandSourceStack> root = d.register(Commands.literal("goidajail")
                 // A prisoner can never use /goidajail at all. Otherwise the command shows up for
                 // anyone holding ANY of the independent jail rights; each subcommand then carries
                 // its own specific permission below.
                 .requires(src -> !isSourceJailed(src)
                         && (JailPermissions.canUse(src) || JailPermissions.canConfiscate(src)
                             || JailPermissions.canSilent(src) || JailPermissions.canLog(src)))
+                .executes(JailCommands::help)
 
                 .then(Commands.literal("help")
                         .requires(JailPermissions::canUse)
@@ -78,6 +80,13 @@ public final class JailCommands {
                                 .executes(ctx -> jail(ctx, null))
                                 .then(Commands.argument("minutes", IntegerArgumentType.integer(1))
                                         .executes(ctx -> jail(ctx, IntegerArgumentType.getInteger(ctx, "minutes"))))))
+
+                // Прямой аргумент: /goidajail <игрок> [минуты] (удобный шорткат для /goidajail jail ...)
+                .then(Commands.argument("targets", EntityArgument.players())
+                        .requires(JailPermissions::canUse)
+                        .executes(ctx -> jail(ctx, null))
+                        .then(Commands.argument("minutes", IntegerArgumentType.integer(1))
+                                .executes(ctx -> jail(ctx, IntegerArgumentType.getInteger(ctx, "minutes")))))
 
                 .then(Commands.literal("release")
                         .requires(JailPermissions::canUse)
@@ -185,6 +194,21 @@ public final class JailCommands {
                         .then(Commands.argument("pos", BlockPosArgument.blockPos())
                                 .executes(JailCommands::setJailSpawn)))
         );
+
+        // Алиас /jail -> /goidajail (поддерживает /jail, /jail <игрок> [минуты], /jail baton, /jail list и т.д.)
+        d.register(Commands.literal("jail")
+                .requires(src -> !isSourceJailed(src) && JailPermissions.canUse(src))
+                .redirect(root));
+
+        // Алиас /unjail <игрок> -> освободить заключённого (/goidajail release)
+        d.register(Commands.literal("unjail")
+                .requires(src -> !isSourceJailed(src) && JailPermissions.canUse(src))
+                .executes(ctx -> {
+                    ctx.getSource().sendFailure(Component.literal("§cИспользование: /unjail <игрок>"));
+                    return 0;
+                })
+                .then(Commands.argument("targets", EntityArgument.players())
+                        .executes(ctx -> releaseCmd(ctx, false))));
     }
 
     // ---- Executors ------------------------------------------------------------------------
@@ -668,8 +692,8 @@ public final class JailCommands {
         line(s, "§7Время идёт только пока игрок онлайн. Вещи изымаются и возвращаются при выходе.");
         line(s, "");
         line(s, "§6/goidajail baton §7— получить дубинку");
-        line(s, "§6/goidajail jail <игрок> [минуты] §7— посадить вручную");
-        line(s, "§6/goidajail release <игрок> §7— освободить и вернуть вещи");
+        line(s, "§6/jail <игрок> [минуты] §7или §6/goidajail jail <игрок> [минуты] §7— посадить вручную");
+        line(s, "§6/unjail <игрок> §7или §6/goidajail release <игрок> §7— освободить и вернуть вещи");
         line(s, "§6/goidajail pardon <игрок> §7— освободить + СНЯТЬ нарушение (ошибочный арест)");
         line(s, "§6/goidajail time <игрок> <минуты> §7— задать оставшийся срок");
         line(s, "§6/goidajail addtime <игрок> <минуты> §7— добавить/убавить срок");
@@ -696,8 +720,8 @@ public final class JailCommands {
         line(s, "§6/goidajail clearregion §7— очистить выделение (границы не меняются)");
         line(s, "§6/goidajail setjailspawn <x y z> §7— изменить точку появления заключённых");
         line(s, "");
-        line(s, "§7Права (LuckPerms, выдаются независимо):");
-        line(s, "§f  goidajail.use §7— базовые команды и дубинка (op-уровень " + Config.BATON_PERMISSION_LEVEL.get() + ").");
+        line(s, "§7Права (LuckPerms / FTB Ranks, выдаются независимо):");
+        line(s, "§f  goidajail.use (или command.goidajail в FTB Ranks) §7— базовые команды и дубинка (op-уровень " + Config.BATON_PERMISSION_LEVEL.get() + ").");
         line(s, "§f  goidajail.confiscate §7— открывать инвентарь заключённого.");
         line(s, "§f  goidajail.confiscate.silent §7— конфисковать без оповещения игрока.");
         line(s, "§f  goidajail.confiscate.log §7— смотреть журнал конфискаций.");

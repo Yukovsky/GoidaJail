@@ -101,6 +101,32 @@ public final class JailPermissions {
         if (ftb.isPresent()) {
             return ftb.get();
         }
+        // Поддержка узлов команд FTB Ranks (command.goidajail, command.jail):
+        if (USE.equals(node)) {
+            java.util.Optional<Boolean> ftbCmd = FtbRanksPermissions.check(player, "command.goidajail");
+            if (ftbCmd.isPresent()) {
+                return ftbCmd.get();
+            }
+            java.util.Optional<Boolean> ftbJail = FtbRanksPermissions.check(player, "command.jail");
+            if (ftbJail.isPresent()) {
+                return ftbJail.get();
+            }
+        } else if (CONFISCATE.equals(node)) {
+            java.util.Optional<Boolean> ftbConf = FtbRanksPermissions.check(player, "command.goidajail.confiscate");
+            if (ftbConf.isPresent()) {
+                return ftbConf.get();
+            }
+        } else if (SILENT.equals(node)) {
+            java.util.Optional<Boolean> ftbSil = FtbRanksPermissions.check(player, "command.goidajail.confiscatesilent");
+            if (ftbSil.isPresent()) {
+                return ftbSil.get();
+            }
+        } else if (LOG.equals(node)) {
+            java.util.Optional<Boolean> ftbLog = FtbRanksPermissions.check(player, "command.goidajail.confiscationlog");
+            if (ftbLog.isPresent()) {
+                return ftbLog.get();
+            }
+        }
         // Гибридные ядра: LuckPerms-как-Bukkit-плагин.
         return BukkitPermissionBridge.hasPermission(player, bukkitNode);
     }
