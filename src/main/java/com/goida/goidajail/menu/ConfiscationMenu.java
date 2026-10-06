@@ -41,13 +41,14 @@ public final class ConfiscationMenu extends ChestMenu {
     private final String moderatorName;
     private final boolean silent;
     private final List<Origin> layout;
+    private final int pageStartIndex;
     private final int shownCount;
     private final List<ItemStack> before;
 
     private ConfiscationMenu(int id, Inventory playerInv, SimpleContainer container,
                              MinecraftServer server, UUID targetId, String targetName,
                              String moderatorName, boolean silent, List<Origin> layout,
-                             List<ItemStack> before) {
+                             int pageStartIndex, int shownCount, List<ItemStack> before) {
         super(MenuType.GENERIC_9x6, id, playerInv, container, ROWS);
         this.chest = container;
         this.server = server;
@@ -56,12 +57,18 @@ public final class ConfiscationMenu extends ChestMenu {
         this.moderatorName = moderatorName;
         this.silent = silent;
         this.layout = layout;
-        this.shownCount = Math.min(layout.size(), SIZE);
+        this.pageStartIndex = pageStartIndex;
+        this.shownCount = shownCount;
         this.before = before;
     }
 
-    /** Opens the confiscation window for the moderator over the target's stored inventory. */
+    /** Opens page 1 of the confiscation window for the moderator over the target's stored inventory. */
     public static void open(ServerPlayer moderator, UUID targetId, String targetName, boolean silent) {
+        open(moderator, targetId, targetName, silent, 1);
+    }
+
+    /** Opens a specific page of the confiscation window for the moderator over the target's stored inventory. */
+    public static void open(ServerPlayer moderator, UUID targetId, String targetName, boolean silent, int requestedPage) {
         MinecraftServer server = moderator.server;
         JailSavedData saved = JailSavedData.get(server);
         ConfiscatedInventory inv = saved.getConfiscated(targetId);
@@ -72,19 +79,34 @@ public final class ConfiscationMenu extends ChestMenu {
         }
 
         List<Origin> layout = inv.buildLayout();
-        int shown = Math.min(layout.size(), SIZE);
+        int totalPages = Math.max(1, (layout.size() + SIZE - 1) / SIZE);
+        int page = Math.max(1, Math.min(requestedPage, totalPages));
+        int startIndex = (page - 1) * SIZE;
+        int endIndex = Math.min(page * SIZE, layout.size());
+        int shown = Math.max(0, endIndex - startIndex);
+
         SimpleContainer container = new SimpleContainer(SIZE);
         List<ItemStack> before = new ArrayList<>(shown);
         for (int k = 0; k < shown; k++) {
-            ItemStack stack = inv.get(layout.get(k)).copy();
+            ItemStack stack = inv.get(layout.get(startIndex + k)).copy();
             container.setItem(k, stack);
             before.add(stack.copy());
         }
 
-        Component title = Component.literal("§8Инвентарь: §f" + targetName);
+        Component title;
+        if (totalPages > 1) {
+            title = Component.literal("§8Инвентарь: §f" + targetName + " §7(" + page + "/" + totalPages + ")");
+            moderator.sendSystemMessage(Component.literal("§7Инвентарь игрока §f" + targetName
+                    + " §7содержит §f" + layout.size() + "§7 слотов (§e" + page + "/" + totalPages + " стр.§7). "
+                    + "Для выбора страницы: §e/goidajail confiscate " + targetName
+                    + (silent ? " silent " : " ") + "<стр>"));
+        } else {
+            title = Component.literal("§8Инвентарь: §f" + targetName);
+        }
+
         moderator.openMenu(new SimpleMenuProvider(
                 (id, pinv, p) -> new ConfiscationMenu(id, pinv, container, server, targetId,
-                        targetName, p.getGameProfile().getName(), silent, layout, before),
+                        targetName, p.getGameProfile().getName(), silent, layout, startIndex, shown, before),
                 title));
     }
 
@@ -106,12 +128,12 @@ public final class ConfiscationMenu extends ChestMenu {
         if (inv == null) {
             // Prisoner was released while the window was open (rare race). Rebuild a fresh entry
             // from the layout so nothing crashes; it is cleaned up on the player's next login.
-            inv = new ConfiscatedInventory(sectionSize(Section.CURIOS), sectionSize(Section.COSMETIC));
+            inv = new ConfiscatedInventory(sectionSize(Section.CURIOS), sectionSize(Section.COSMETIC), sectionSize(Section.BACKPACKED));
         }
 
         // Write the (possibly edited) shown slots back into storage.
         for (int k = 0; k < shownCount; k++) {
-            inv.set(layout.get(k), c.getItem(k).copy());
+            inv.set(layout.get(pageStartIndex + k), c.getItem(k).copy());
         }
         // Return any items the moderator dropped into filler slots — never lose them.
         for (int k = shownCount; k < c.getContainerSize(); k++) {

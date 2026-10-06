@@ -51,6 +51,13 @@ versionRange = "*"
 ordering = "AFTER"
 side = "SERVER"
 
+[[mods.dependencies."${mod_id}"]]
+modId = "backpacked"
+type = "optional"
+versionRange = "*"
+ordering = "AFTER"
+side = "SERVER"
+
 # GoidaChat — optional. When present, a jailed player is fully muted (chat + voice) for the
 # duration of their sentence. GoidaJail works without it (no muting), so this stays optional.
 [[mods.dependencies."${mod_id}"]]

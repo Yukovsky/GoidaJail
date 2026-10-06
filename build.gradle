@@ -56,7 +56,7 @@ neoForge {
 }
 
 dependencies {
-    // Curios and CosmeticArmorReworked are integrated purely via reflection in the `compat`
+    // Curios, CosmeticArmorReworked and Backpacked are integrated purely via reflection in the `compat`
     // package, so the mod compiles against NeoForge alone and runs whether or not they're installed.
 
     // GoidaChat — optional mod for muting jailed players (chat + voice). Provided at runtime by the

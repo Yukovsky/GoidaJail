@@ -127,6 +127,13 @@ public final class EscapeGuardHandler {
     }
 
     @SubscribeEvent
+    public static void onContainerOpen(net.neoforged.neoforge.event.entity.player.PlayerContainerEvent.Open event) {
+        if (event.getEntity() instanceof ServerPlayer p && JailManager.isJailed(p)) {
+            p.closeContainer();
+        }
+    }
+
+    @SubscribeEvent
     public static void onServerTick(ServerTickEvent.Post event) {
         net.minecraft.server.MinecraftServer server = event.getServer();
         for (ServerPlayer p : server.getPlayerList().getPlayers()) {

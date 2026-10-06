@@ -40,9 +40,10 @@ can hand out with a single tool swing, mid-fight, without opening a menu.
 
 1. A moderator hits a player with the jail baton → the target is teleported to a private
    bedrock dimension (`goidajail:jail`).
-2. Their inventory — vanilla slots, plus Curios and cosmetic armor if installed — is captured
-   and stored; the player is switched to adventure mode with damage disabled (no deaths, no
-   Gravestone-style grave spawning).
+2. Their inventory — vanilla slots, plus Curios, cosmetic armor, and Backpacked equipped
+   backpacks (including their contents, augments, and data-driven cosmetics/addons) if installed —
+   is captured and stored; the player is switched to adventure mode with damage disabled (no deaths,
+   no Gravestone-style grave spawning).
 3. The sentence clock only runs while the player is **online**. First offense: 15 minutes.
    Every additional offense within the retention window (default 3 days) adds another 15,
    up to a configurable cap.
@@ -60,7 +61,7 @@ can hand out with a single tool swing, mid-fight, without opening a menu.
 | Java | 21 |
 | Side | **Server only** — do not install on clients |
 | KubeJS | Required — registers the baton item (already on both sides in a modpack) |
-| Curios / CosmeticArmorReworked | Optional — their slots are captured and restored too |
+| Curios / CosmeticArmorReworked / Backpacked | Optional — their slots and backpacks are captured and restored too (including Backpacked Shells, WetBackpacks cosmetics) |
 | LuckPerms / FTB Ranks | Optional — grants permissions to non-op players; falls back to op-level otherwise |
 | GoidaChat | Optional — mutes chat and voice for the duration of a sentence |
 
@@ -129,7 +130,7 @@ All commands live under `/goidajail` (with intuitive aliases `/jail` and `/unjai
 | `restoreinv <player>` | **Recovery:** force-restore items from the saved backup |
 | `clearstate <player>` | **Emergency:** clear jail status without touching the item backup |
 | `clearoffenses <player>` | Wipe a player's offense history |
-| `confiscate <name> [notify\|silent]` | Open a prisoner's inventory to confiscate items |
+| `confiscate <name> [notify\|silent] [page]` | Open a prisoner's inventory to confiscate items (paginated) |
 | `confiscatesilent <on\|off>` | Toggle your default confiscation notification behaviour |
 | `confiscationlog [page]` | Paginated audit log of every confiscation |
 | `visit` / `back` | Teleport into the jail dimension and back, for setup or inspection |
@@ -142,10 +143,11 @@ All commands live under `/goidajail` (with intuitive aliases `/jail` and `/unjai
 ## Confiscation
 
 While a player is jailed, a moderator with `goidajail.confiscate` can open a **separate**
-container view of their impounded inventory — vanilla, Curios, and cosmetic slots included —
+container view of their impounded inventory — vanilla, Backpacked, Curios, and cosmetic slots included —
 and pull out whatever shouldn't be given back.
 
-- `/goidajail confiscate <name>` opens a chest-style window over the stored inventory. Works
+- `/goidajail confiscate <name> [notify|silent] [page]` opens a chest-style window over the stored
+  inventory. Supports pagination if the total slots exceed a standard 54-slot chest. Works
   for **offline** players too, since the data lives server-side.
 - Take or place items exactly like a normal chest; closing with **Esc** saves the result.
 - **Confiscated items do not return** to the player on release — everything else does.

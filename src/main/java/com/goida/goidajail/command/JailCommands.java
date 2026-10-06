@@ -151,13 +151,19 @@ public final class JailCommands {
                 .then(Commands.literal("confiscate")
                         .requires(JailPermissions::canConfiscate)
                         .then(Commands.argument("player", StringArgumentType.word())
-                                .executes(ctx -> confiscate(ctx, null))
+                                .executes(ctx -> confiscate(ctx, null, 1))
+                                .then(Commands.argument("page", IntegerArgumentType.integer(1))
+                                        .executes(ctx -> confiscate(ctx, null, IntegerArgumentType.getInteger(ctx, "page"))))
                                 .then(Commands.literal("notify")
                                         .requires(JailPermissions::canSilent)
-                                        .executes(ctx -> confiscate(ctx, Boolean.FALSE)))
+                                        .executes(ctx -> confiscate(ctx, Boolean.FALSE, 1))
+                                        .then(Commands.argument("page", IntegerArgumentType.integer(1))
+                                                .executes(ctx -> confiscate(ctx, Boolean.FALSE, IntegerArgumentType.getInteger(ctx, "page")))))
                                 .then(Commands.literal("silent")
                                         .requires(JailPermissions::canSilent)
-                                        .executes(ctx -> confiscate(ctx, Boolean.TRUE)))))
+                                        .executes(ctx -> confiscate(ctx, Boolean.TRUE, 1))
+                                        .then(Commands.argument("page", IntegerArgumentType.integer(1))
+                                                .executes(ctx -> confiscate(ctx, Boolean.TRUE, IntegerArgumentType.getInteger(ctx, "page")))))))
 
                 .then(Commands.literal("confiscatesilent")
                         .requires(JailPermissions::canSilent)
@@ -672,7 +678,7 @@ public final class JailCommands {
 
     // ---- Confiscation -----------------------------------------------------------------------
 
-    private static int confiscate(CommandContext<CommandSourceStack> ctx, Boolean overrideSilent)
+    private static int confiscate(CommandContext<CommandSourceStack> ctx, Boolean overrideSilent, int page)
             throws CommandSyntaxException {
         CommandSourceStack src = ctx.getSource();
         ServerPlayer moderator = src.getPlayerOrException(); // a GUI needs a real player
@@ -722,7 +728,7 @@ public final class JailCommands {
             silent = canSilent && saved.isSilentByDefault(moderator.getUUID());
         }
 
-        ConfiscationMenu.open(moderator, targetId, targetName, silent);
+        ConfiscationMenu.open(moderator, targetId, targetName, silent, page);
         return 1;
     }
 
@@ -928,7 +934,7 @@ public final class JailCommands {
         line(s, "§6/goidajail clearoffenses <игрок> §7— очистить историю нарушений");
         line(s, "");
         line(s, "§e— Конфискация (отдельные права) —");
-        line(s, "§6/goidajail confiscate <ник> [notify|silent] §7— открыть инвентарь заключённого");
+        line(s, "§6/goidajail confiscate <ник> [notify|silent] [стр] §7— открыть инвентарь заключённого");
         line(s, "§7  (онлайн/офлайн); забранное не возвращается, остальное вернётся в свои слоты.");
         line(s, "§6/goidajail confiscatesilent <on|off> §7— тихий режим по умолчанию (без оповещения)");
         line(s, "§6/goidajail confiscationlog [стр] §7— журнал: кто у кого что и сколько забрал");
